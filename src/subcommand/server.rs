@@ -12,11 +12,11 @@ use {
   },
   axum::{
     body,
-    extract::{Extension, Path, Query},
+    extract::{Extension, Path, Query, Json},
     headers::UserAgent,
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Router, TypedHeader,
   },
   axum_server::Handle,
@@ -41,6 +41,21 @@ mod error;
 enum BlockQuery {
   Height(u64),
   Hash(BlockHash),
+}
+
+#[derive(Serialize)]
+pub(crate) struct OutputInfo {
+  pub(crate)  outpoint: OutPoint,
+  pub(crate)  inscriptions: Vec<InscriptionId>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct OutputInfoResponse {
+  pub(crate) outputs: Vec<OutputInfo>,
+  pub(crate) hasSatIndex: bool,
+  pub(crate) lastBlock: (u64, BlockHash),
+  pub(crate) blockHeight: u64,
+  pub(crate) chain: Chain,
 }
 
 impl FromStr for BlockQuery {
@@ -125,6 +140,8 @@ pub(crate) struct Server {
 
 impl Server {
   pub(crate) fn run(self, options: Options, index: Arc<Index>, handle: Handle) -> Result {
+    println!("run server ......");
+
     Runtime::new()?.block_on(async {
       let clone = index.clone();
       thread::spawn(move || loop {
@@ -163,6 +180,7 @@ impl Server {
         .route("/install.sh", get(Self::install_script))
         .route("/ordinal/:sat", get(Self::ordinal))
         .route("/output/:output", get(Self::output))
+        .route("/api/outputs", post(Self::outputs))
         .route("/preview/:inscription_id", get(Self::preview))
         .route("/range/:start/:end", get(Self::range))
         .route("/rare.txt", get(Self::rare_txt))
@@ -392,6 +410,48 @@ impl Server {
 
   async fn ordinal(Path(sat): Path<String>) -> Redirect {
     Redirect::to(&format!("/sat/{sat}"))
+  }
+
+  async fn outputs(
+    Extension(page_config): Extension<Arc<PageConfig>>,
+    Extension(index): Extension<Arc<Index>>,
+    Json(outpoints): Json<Vec<OutPoint>>,
+  ) -> ServerResult<Json<OutputInfoResponse>> {
+    // index.blocks(100)
+    // index.has_sat_index()
+    // chain: page_config.chain,
+    let mut output_info_list = Vec::new();
+    let last_block = index.blocks(1)?[0];
+    let block_height = last_block.0;
+    let has_sat_index = index.has_sat_index()?;
+    let chain = page_config.chain;
+
+
+    for outpoint in outpoints {
+      let inscriptions = index.get_inscriptions_on_output(outpoint).unwrap_or_else(|_| Vec::new());
+      // let list = if index.has_sat_index().unwrap_or(false) {
+      //   index.list(outpoint).ok()
+      // } else {
+      //   None
+      // };
+      let output = OutputInfo {
+        outpoint,
+        inscriptions,
+        // list,
+      };
+
+      output_info_list.push(output);
+    }
+
+    let response = OutputInfoResponse {
+      hasSatIndex: has_sat_index,
+      chain: chain.clone(),
+      lastBlock: last_block.clone(),
+      blockHeight: block_height,
+      outputs: output_info_list,
+    };
+
+    Ok(Json(response))
   }
 
   async fn output(
