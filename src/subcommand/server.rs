@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use {
   self::{
     deserialize_from_str::DeserializeFromStr,
@@ -43,15 +45,11 @@ enum BlockQuery {
   Hash(BlockHash),
 }
 
-#[derive(Serialize)]
-pub(crate) struct OutputInfo {
-  pub(crate)  outpoint: OutPoint,
-  pub(crate)  inscriptions: Vec<InscriptionId>,
-}
+
 
 #[derive(Serialize)]
 pub(crate) struct OutputInfoResponse {
-  pub(crate) outputs: Vec<OutputInfo>,
+  pub(crate) outputs: HashMap<OutPoint, Vec<InscriptionId>>,
   pub(crate) hasSatIndex: bool,
   pub(crate) lastBlock: (u64, BlockHash),
   pub(crate) blockHeight: u64,
@@ -422,7 +420,7 @@ impl Server {
     // index.blocks(100)
     // index.has_sat_index()
     // chain: page_config.chain,
-    let mut output_info_list = Vec::new();
+    let mut outputs_info = HashMap::new();
     let last_block = index.blocks(1)?[0];
     let block_height = last_block.0;
     let has_sat_index = index.has_sat_index()?;
@@ -436,13 +434,10 @@ impl Server {
       // } else {
       //   None
       // };
-      let output = OutputInfo {
-        outpoint,
-        inscriptions,
-        // list,
-      };
 
-      output_info_list.push(output);
+      if !inscriptions.is_empty() {
+        outputs_info.insert(outpoint, inscriptions);
+      }
     }
 
     let response = OutputInfoResponse {
@@ -450,7 +445,7 @@ impl Server {
       chain: chain.clone(),
       lastBlock: last_block.clone(),
       blockHeight: block_height,
-      outputs: output_info_list,
+      outputs: outputs_info,
     };
 
     Ok(Json(response))
